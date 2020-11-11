@@ -132,6 +132,7 @@ public:
 	 */
 	void			display_status_streams();
 
+	static int		stop_command(int argc, char *argv[]);
 	static int		stream_command(int argc, char *argv[]);
 
 	static int		instance_count();

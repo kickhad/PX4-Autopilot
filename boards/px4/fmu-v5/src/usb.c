@@ -57,17 +57,57 @@
 #include <stm32_otg.h>
 #include "board_config.h"
 
-/************************************************************************************
- * Definitions
- ************************************************************************************/
+#include <nuttx/wqueue.h>
 
-/************************************************************************************
- * Private Functions
- ************************************************************************************/
+extern int sercon_main(int c, char **argv);
+extern int serdis_main(int c, char **argv);
 
-/************************************************************************************
- * Public Functions
- ************************************************************************************/
+extern int mavlink_main(int c, char **argv);
+
+static char *mavlink_start_argv[5] = {"mavlink", "start", "-d", "/dev/ttyACM0", NULL};
+static char *mavlink_stop_argv[5] = {"mavlink", "stop", "-d", "/dev/ttyACM0", NULL};
+
+static void mavlink_usb_start(void *arg)
+{
+	if (sercon_main(0, NULL) == EXIT_SUCCESS) {
+		syslog(LOG_INFO, "MAVLINK USB START\n");
+
+		// TODO:
+		// ret = exec_builtin(cmd, (FAR char * const *)argv, redirfile, oflags);
+		//char *mavlink_argv[5] = {"mavlink", "start", "-d", "/dev/ttyACM0", NULL};
+		mavlink_main(4, (char **)mavlink_start_argv);
+	}
+}
+
+static void mavlink_usb_stop(void *arg)
+{
+	syslog(LOG_INFO, "MAVLINK USB STOP\n");
+
+	// TODO:
+	// ret = exec_builtin(cmd, (FAR char * const *)argv, redirfile, oflags);
+	//char *mavlink_argv[5] = {"mavlink", "stop", "-d", "/dev/ttyACM0", NULL};
+	mavlink_main(4, (char **)mavlink_stop_argv);
+
+	serdis_main(0, NULL);
+}
+
+static struct work_s usb_work;
+
+static int usb_otgfs_vbus_event(int irq, void *context, void *arg)
+{
+	int value = stm32_gpioread(GPIO_OTGFS_VBUS);
+
+	if (value == 1) {
+		// USB connected
+		work_queue(HPWORK, &usb_work, mavlink_usb_start, NULL, USEC2TICK(10000));
+
+	} else if (value == 0) {
+		// USB disconnected
+		work_queue(HPWORK, &usb_work, mavlink_usb_stop, NULL, USEC2TICK(10000));
+	}
+
+	return 0;
+}
 
 /************************************************************************************
  * Name: stm32_usbinitialize
@@ -85,6 +125,7 @@ __EXPORT void stm32_usbinitialize(void)
 
 #ifdef CONFIG_STM32F7_OTGFS
 	stm32_configgpio(GPIO_OTGFS_VBUS);
+	stm32_gpiosetevent(GPIO_OTGFS_VBUS, true, true, true, usb_otgfs_vbus_event, NULL);
 #endif
 }
 

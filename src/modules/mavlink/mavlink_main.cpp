@@ -2880,6 +2880,123 @@ Mavlink::display_status_streams()
 }
 
 int
+Mavlink::stop_command(int argc, char *argv[])
+{
+	printf("stop_command\n");
+
+	for (int i = 0; i < argc; i++) {
+		printf("argv[%d] = %s\n", i, argv[i]);
+	}
+
+	printf("\n");
+
+
+	const char *device_name = nullptr;
+
+#ifdef MAVLINK_UDP
+	char *eptr;
+	int temp_int_arg;
+	unsigned short network_port = 0;
+#endif // MAVLINK_UDP
+
+	bool provided_device = false;
+	bool provided_network_port = false;
+
+	/*
+	 * Called via main with original argv
+	 *   mavlink start
+	 *
+	 *  Remove 2
+	 */
+	argc -= 2;
+	argv += 2;
+
+	/* don't exit from getopt loop to leave getopt global variables in consistent state,
+	 * set error flag instead */
+	bool err_flag = false;
+
+	int i = 0;
+
+	while (i < argc) {
+		if (0 == strcmp(argv[i], "-d") && i < argc - 1) {
+			provided_device = true;
+			device_name = argv[i + 1];
+			i++;
+
+#ifdef MAVLINK_UDP
+
+		} else if (0 == strcmp(argv[i], "-u") && i < argc - 1) {
+			provided_network_port = true;
+			temp_int_arg = strtoul(argv[i + 1], &eptr, 10);
+
+			if (*eptr == '\0') {
+				network_port = temp_int_arg;
+
+			} else {
+				err_flag = true;
+			}
+
+			i++;
+#endif // MAVLINK_UDP
+
+		} else {
+			err_flag = true;
+		}
+
+		i++;
+	}
+
+	if (!err_flag) {
+
+		Mavlink *inst = nullptr;
+
+		if (provided_device && !provided_network_port) {
+			inst = get_instance_for_device(device_name);
+
+#ifdef MAVLINK_UDP
+
+		} else if (provided_network_port && !provided_device) {
+			inst = get_instance_for_network_port(network_port);
+#endif // MAVLINK_UDP
+
+		} else if (provided_device && provided_network_port) {
+			PX4_WARN("please provide either a device name or a network port");
+			return PX4_ERROR;
+		}
+
+		if (inst != nullptr) {
+			/* set flag to stop thread and wait for all threads to finish */
+			inst->_task_should_exit = true;
+
+			unsigned iterations = 0;
+
+			PX4_INFO("waiting for instances to stop");
+
+			while (inst->_task_running) {
+				iterations++;
+
+				if (iterations > 1000) {
+					PX4_ERR("Couldn't stop mavlink instance");
+					return PX4_ERROR;
+				}
+
+				usleep(1);
+			}
+
+			LL_DELETE(_mavlink_instances, inst);
+			delete inst;
+			PX4_INFO("instance stopped");
+			return PX4_OK;
+		}
+
+	} else {
+		usage();
+	}
+
+	return PX4_ERROR;
+}
+
+int
 Mavlink::stream_command(int argc, char *argv[])
 {
 	const char *device_name = DEFAULT_DEVICE_NAME;
@@ -3080,6 +3197,14 @@ $ mavlink stream -u 14556 -s HIGHRES_IMU -r 50
 
 	PRINT_MODULE_USAGE_COMMAND_DESCR("stop-all", "Stop all instances");
 
+
+	PRINT_MODULE_USAGE_COMMAND_DESCR("stop", "Stop a running instance");
+#if defined(CONFIG_NET) || defined(__PX4_POSIX)
+	PRINT_MODULE_USAGE_PARAM_INT('u', -1, 0, 65536, "Select Mavlink instance via local Network Port", true);
+#endif
+	PRINT_MODULE_USAGE_PARAM_STRING('d', nullptr, "<file:dev>", "Select Mavlink instance via Serial Device", true);
+
+
 	PRINT_MODULE_USAGE_COMMAND_DESCR("status", "Print status for all instances");
 	PRINT_MODULE_USAGE_ARG("streams", "Print all enabled streams", true);
 
@@ -3106,17 +3231,15 @@ int mavlink_main(int argc, char *argv[])
 	if (!strcmp(argv[1], "start")) {
 		return Mavlink::start(argc, argv);
 
-	} else if (!strcmp(argv[1], "stop")) {
-		PX4_WARN("mavlink stop is deprecated, use stop-all instead");
-		usage();
-		return 1;
-
 	} else if (!strcmp(argv[1], "stop-all")) {
 		return Mavlink::destroy_all_instances();
 
 	} else if (!strcmp(argv[1], "status")) {
 		bool show_streams_status = argc > 2 && strcmp(argv[2], "streams") == 0;
 		return Mavlink::get_status_all_instances(show_streams_status);
+
+	} else if (!strcmp(argv[1], "stop")) {
+		return Mavlink::stop_command(argc, argv);
 
 	} else if (!strcmp(argv[1], "stream")) {
 		return Mavlink::stream_command(argc, argv);
